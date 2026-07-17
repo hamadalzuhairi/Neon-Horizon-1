@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() > 0 &&
+             data.username is string && data.username.size() > 0 && data.username.size() <= 30 &&
+             data.createdAt is timestamp &&
+             data.keys().hasAll(['uid', 'username', 'createdAt']) && data.keys().size() == 3 &&
+             data.uid == request.auth.uid;
+    }
+
+    match /counters/{counterId} {
+      allow read: if true;
+      allow create: if isSignedIn() && counterId == 'guests' && incoming().count == 1;
+      allow update: if isSignedIn() && counterId == 'guests' && incoming().count == existing().count + 1;
+    }
+
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if isSignedIn() &&
+                    userId == request.auth.uid &&
+                    isValidUser(incoming());
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    function isValidUsername(data) {
+      return data.uid is string && data.uid.size() > 0 &&
+             data.keys().hasAll(['uid']) && data.keys().size() == 1 &&
+             data.uid == request.auth.uid;
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isSignedIn() &&
+                    isValidUsername(incoming());
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    function isValidScore(data) {
+      return data.uid is string && data.uid.size() > 0 &&
+             data.username is string && data.username.size() > 0 &&
+             data.score is number &&
+             data.timestamp is timestamp &&
+             data.keys().hasAll(['uid', 'username', 'score', 'timestamp']) && data.keys().size() == 4 &&
+             data.uid == request.auth.uid;
+    }
+
+    match /leaderboard/{userId} {
+      allow read: if true;
+      allow create: if isSignedIn() &&
+                    isValidId(userId) &&
+                    userId == request.auth.uid &&
+                    isValidScore(incoming()) &&
+                    incoming().timestamp == request.time;
+      allow update: if isSignedIn() &&
+                    isValidId(userId) &&
+                    userId == request.auth.uid &&
+                    isValidScore(incoming()) &&
+                    incoming().timestamp == request.time &&
+                    incoming().score > existing().score &&
+                    incoming().username == existing().username &&
+                    incoming().uid == existing().uid &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['score', 'timestamp']);
+      allow delete: if false;
+    }
+  }
+}
